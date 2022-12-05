@@ -1,138 +1,250 @@
+#include<cl/cl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
 #include "cnn.h"
 
-static void pooling2x2(float* input, float* output, int N) {
+#define _crt_secure_no_warnings
+#define relu(x) (((x)>0)?(x):0)
+
+static void pooling2x2(float* input, float* output, int n) {
 	int i, j, k, l;
-	for (i = 0; i < N; i++) {
-		for (j = 0; j < N; j++) {
+	for (i = 0; i < n; i++) {
+		for (j = 0; j < n; j++) {
 			float max = 0;
 			for (k = 0; k < 2; k++) {
 				for (l = 0; l < 2; l++) {
-					float pixel = input[(i * 2 + k) * 2 * N + j * 2 + l];
+					float pixel = input[(i * 2 + k) * 2 * n + j * 2 + l];
 					max = (max > pixel) ? max : pixel;
 				}
 			}
-			output[i * N + j] = max;
+			output[i * n + j] = max;
 		}
 	}
 }
 
 /*
- * D = channel size
- * N = width and height of an output image
- * Thus, input is (D, N * 2, N * 2) and output is (D, N, N).
+ * d = channel size
+ * n = width and height of an output image
+ * thus, input is (d, n * 2, n * 2) and output is (d, n, n).
  */
-static void pooling_layer(float* inputs, float* outputs, int D, int N) {
+static void pooling_layer(float* inputs, float* outputs, int d, int n) {
 	int i;
-	for (i = 0; i < D; i++) {
-		float* input = inputs + i * N * N * 4;
-		float* output = outputs + i * N * N;
-		pooling2x2(input, output, N);
+	for (i = 0; i < d; i++) {
+		float* input = inputs + i * n * n * 4;
+		float* output = outputs + i * n * n;
+		pooling2x2(input, output, n);
 	}
 }
 
-static void convolution3x3(float* input, float* output, float* filter, int N) {
+static void convolution3x3(float* input, float* output, float* filter, int n) {
 	int i, j, k, l;
-	for (i = 0; i < N; i++) {
-		for (j = 0; j < N; j++) {
+	for (i = 0; i < n; i++) {
+		for (j = 0; j < n; j++) {
 			float sum = 0;
 			for (k = 0; k < 3; k++) {
 				for (l = 0; l < 3; l++) {
 					int x = i + k - 1;
 					int y = j + l - 1;
-					if (x >= 0 && x < N && y >= 0 && y < N)
-						sum += input[x * N + y] * filter[k * 3 + l];
+					if (x >= 0 && x < n && y >= 0 && y < n)
+						sum += input[x * n + y] * filter[k * 3 + l];
 				}
 			}
-			output[i * N + j] += sum;
+			output[i * n + j] += sum;
 		}
 	}
 }
 
 /*
- * D2 = output channel size
- * D1 = input channel size
- * N = width and height of an input image
+ * d2 = output channel size
+ * d1 = input channel size
+ * n = width and height of an input image
  * input image is zero-padded by 1.
- * Thus, input is (D1, N, N) and output is (D2, N, N)
+ * thus, input is (d1, n, n) and output is (d2, n, n)
  */
-#define ReLU(x) (((x)>0)?(x):0)
-static void convolution_layer(float* inputs, float* outputs, float* filters, float* biases, int D2, int D1, int N) {
+#define relu(x) (((x)>0)?(x):0)
+static void convolution_layer(float* inputs, float* outputs, float* filters, float* biases, int d2, int d1, int n) {
 	int i, j;
 
-	memset(outputs, 0, sizeof(float) * N * N * D2);
+	memset(outputs, 0, sizeof(float) * n * n * d2);
 
-	for (j = 0; j < D2; j++) {
-		for (i = 0; i < D1; i++) {
-			float* input = inputs + N * N * i;
-			float* output = outputs + N * N * j;
-			float* filter = filters + 3 * 3 * (j * D1 + i);
-			convolution3x3(input, output, filter, N);
+	for (j = 0; j < d2; j++) {
+		for (i = 0; i < d1; i++) {
+			float* input = inputs + n * n * i;
+			float* output = outputs + n * n * j;
+			float* filter = filters + 3 * 3 * (j * d1 + i);
+			convolution3x3(input, output, filter, n);
 		}
 	}
 
-	for (i = 0; i < D2; i++) {
-		float* output = outputs + N * N * i;
+	for (i = 0; i < d2; i++) {
+		float* output = outputs + n * n * i;
 		float bias = biases[i];
-		for (j = 0; j < N * N; j++) {
-			output[j] = ReLU(output[j] + bias);
+		for (j = 0; j < n * n; j++) {
+			output[j] = relu(output[j] + bias);
 		}
 	}
 }
 
 /*
- * M = output size
- * N = input size
+ * m = output size
+ * n = input size
  */
-static void fc_layer(float* input_neuron, float* output_neuron, float* weights, float* biases, int M, int N) {
-	int i, j;
-	for (j = 0; j < M; j++) {
-		float sum = 0;
-		for (i = 0; i < N; i++) {
-			sum += input_neuron[i] * weights[j * N + i];
-		}
-		sum += biases[j];
-		output_neuron[j] = ReLU(sum);
+
+char* get_source_code(const char* file_name, size_t* len) {
+	char* source_code;
+	char buf[2] = "\0";
+	int cnt = 0;
+	size_t length;
+	file* file = fopen(file_name, "r");
+	if (file == null) {
+		printf("[%s:%d] failed to open %s\n", __file__, __line__, file_name);
+		exit(exit_failure);
 	}
+	fseek(file, 0, seek_end);
+	length = (size_t)ftell(file);
+	rewind(file);
+	source_code = (char*)malloc(length + 1);
+	fread(source_code, length, 1, file);
+	for (int i = 0; i < length; i++) {
+		buf[0] = source_code[i];
+		if (buf[0] == '\n') cnt++;
+	}
+	source_code[length - cnt] = '\0';
+	fclose(file);
+	*len = length - cnt;
+	return source_code;
 }
 
-static void softmax(float* output, int N) {
-	int i;
-	float max = output[0];
-	for (i = 1; i < N; i++) {
-		max = (output[i] > max) ? output[i] : max;
-	}
-	float sum = 0;
-	for (i = 0; i < N; i++) {
-		sum += exp(output[i] - max);
-	}
-	for (i = 0; i < N; i++) {
-		output[i] = exp(output[i] - max) / sum;
-	}
-}
+static int platformnum = 0;
+static int devicenum = 0;
 
-static int find_max(float* fc, int N) {
-	int i;
-	int maxid = 0;
-	float maxval = 0;
-	for (i = 0; i < N; i++) {
-		if (maxval < fc[i]) {
-			maxval = fc[i];
-			maxid = i;
-		}
-	}
-	return maxid;
-}
+
+static cl_uint platformcount;
+static cl_platform_id* platforms;
+static cl_uint devicecount;
+static cl_device_id* devices;
+static cl_device_id device;
+static cl_context context;
+static cl_int err;
 
 float* alloc_layer(size_t n) {
 	return (float*)malloc(n * sizeof(float));
 }
 
 void cnn_init() {
-	// nothing to init in the sequential version
+	// 1. platform 가져오기
+	clgetplatformids(0, null, &platformcount);
+	platforms = (cl_platform_id*)malloc(sizeof(cl_platform_id) * platformcount);
+	clgetplatformids(platformcount, platforms, null);
+
+	// 2. device 가져오기
+	clgetdeviceids(platforms[0], cl_device_type_all, 0, null, &devicecount);
+	devices = (cl_device_id*)malloc(sizeof(cl_device_id) * devicecount);
+	clgetdeviceids(platforms[platformnum], cl_device_type_all, devicecount, devices, null);
+	device = devices[devicenum];
+
+	// 3. context 생성하기
+	context = clcreatecontext(null, 1, &device, null, null, null);
+
+}
+
+void fc_layer(float* input_neuron, float* output_neuron, float* weights, float* biases, int m, int n) {
+
+	const char* sourcefile = "fc.cl";
+	const char* kernelname = "fullconcectionkernel";
+
+	cl_command_queue queue = clcreatecommandqueuewithproperties(context, device, 0, null);
+	size_t kernel_source_size;
+
+	char* kernel_source = get_source_code(sourcefile, &kernel_source_size);
+
+	cl_program program = clcreateprogramwithsource(context, 1, (const char**)&kernel_source, &kernel_source_size, null);
+	cl_int build_status = clbuildprogram(program, 1, &device, null, null, null);
+	cl_kernel kernel = clcreatekernel(program, kernelname, &err);
+
+	cl_mem inputbuffer = clcreatebuffer(context, cl_mem_read_write, n * sizeof(int), null, null);
+	cl_mem outputbuffer = clcreatebuffer(context, cl_mem_read_write, n * sizeof(int), null, null);
+	cl_mem weightbuffer = clcreatebuffer(context, cl_mem_read_write, n * sizeof(int), null, null);
+	cl_mem biasesbuffer = clcreatebuffer(context, cl_mem_read_write, n * sizeof(int), null, null);
+
+	err = clsetkernelarg(kernel, 0, sizeof(cl_mem), &outputbuffer);
+	err = clsetkernelarg(kernel, 1, sizeof(cl_mem), &inputbuffer);
+	err = clsetkernelarg(kernel, 2, sizeof(cl_mem), &weightbuffer);
+	err = clsetkernelarg(kernel, 3, sizeof(cl_mem), &biasesbuffer);
+	err = clsetkernelarg(kernel, 4, sizeof(cl_int), &n);
+
+	size_t global_size[1] = { n };
+
+	err = clenqueuendrangekernel(queue, kernel, 1, null, global_size, 0, 0, null, null);
+	err = clenqueuereadbuffer(queue, outputbuffer, cl_true, 0, sizeof(float) * n, output_neuron, 0, null, null);
+
+	clflush(queue);
+	clfinish(queue);
+
+	system("pause");
+
+	clreleasememobject(outputbuffer);
+	clreleasekernel(kernel);
+	clreleaseprogram(program);
+	clreleasecommandqueue(queue);
+	clreleasecontext(context);
+}
+
+static int find_max(float* fc, int n) {
+	
+	int i;
+	int maxid = 0;
+	float maxval = 0;
+	for (i = 0; i < n; i++) {
+		if (maxval < fc[i]) {
+				maxval = fc[i];
+				maxid = i;
+			}
+		}
+		return maxid;
+}
+
+void softmax(float* output, int n) {
+	int i;
+	float max = output[0];
+	for (i = 1; i < n; i++) {
+		max = (output[i] > max) ? output[i] : max;
+	}
+
+	const char* sourcefile = "soft_max.cl";
+	const char* kernelname = "soft_max_kernel";
+
+	cl_command_queue queue = clcreatecommandqueuewithproperties(context, device, 0, null);
+	size_t kernel_source_size;
+
+	char* kernel_source = get_source_code(sourcefile, &kernel_source_size);
+
+	cl_program program = clcreateprogramwithsource(context, 1, (const char**)&kernel_source, &kernel_source_size, null);
+	cl_int build_status = clbuildprogram(program, 1, &device, null, null, null);
+	cl_kernel kernel = clcreatekernel(program, kernelname, &err);
+
+	cl_mem outputbuffer = clcreatebuffer(context, cl_mem_read_write, n * sizeof(int), null, null);
+
+	err = clsetkernelarg(kernel, 0, sizeof(cl_mem), &outputbuffer);
+	err = clsetkernelarg(kernel, 1, sizeof(cl_float), &max);
+
+	size_t global_size[1] = { n };
+
+	err = clenqueuendrangekernel(queue, kernel, 1, null, global_size, 0, 0, null, null);
+	err = clenqueuereadbuffer(queue, outputbuffer, cl_true, 0, sizeof(float) * n, output, 0, null, null);
+
+	clflush(queue);
+	clfinish(queue);
+
+	system("pause");
+
+	clreleasememobject(outputbuffer);
+	clreleasekernel(kernel);
+	clreleaseprogram(program);
+	clreleasecommandqueue(queue);
+	clreleasecontext(context);
 }
 
 void cnn(float* images, float** network, int* labels, float* confidences, int num_images) {
